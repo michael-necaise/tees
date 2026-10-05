@@ -13,6 +13,8 @@ export const Route = createRootRoute({
       { title: APP_NAME },
       { name: "description", content: "Make every tee. Workshop, planet, then the probes. One screen." },
       { name: "theme-color", content: "#0c1612" },
+      { name: "apple-mobile-web-app-capable", content: "yes" },
+      { name: "apple-mobile-web-app-title", content: "Tees" },
     ],
     links: [
       { rel: "icon", type: "image/svg+xml", href: "/favicon.svg" },

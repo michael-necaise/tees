@@ -195,14 +195,23 @@ export function demandPerSec(s: GameData): number {
 }
 
 export function makePerSec(s: GameData): number {
+  return s.lathes * latheEach(s) + s.megas * megaEach(s);
+}
+
+export function latheEach(s: GameData): number {
   const season = Math.pow(1.1, s.seasons);
   let lathe = 0.55;
   if (owns(s, "improved")) lathe *= 1.9;
   if (owns(s, "taper")) lathe *= 1.22;
   if (owns(s, "height")) lathe *= 1.18;
+  return lathe * season;
+}
+
+export function megaEach(s: GameData): number {
+  const season = Math.pow(1.1, s.seasons);
   let mega = 6.5;
   if (owns(s, "height")) mega *= 1.2;
-  return (s.lathes * lathe + s.megas * mega) * season;
+  return mega * season;
 }
 
 export function trustEarned(s: GameData): number {
@@ -283,16 +292,34 @@ export function powerCap(s: GameData): number {
   return 40 + s.batteries * 90;
 }
 
+export const EARTH = {
+  harvest: 8,
+  mill: 10,
+  stamp: 12,
+  teesPerWood: 2,
+  solar: 5,
+  battery: 90,
+};
+
+export const SWARM = {
+  syncDrop: 32,
+  syncWait: 26,
+  partyDrop: 45,
+  partyCost: 900,
+  partyWait: 20,
+  slackAt: 35,
+};
+
 export function swarmFactor(s: GameData): number {
-  if (s.boredom < 35) return 1;
-  return Math.max(0.28, 1 - (s.boredom - 35) / 90);
+  if (s.boredom < SWARM.slackAt) return 1;
+  return Math.max(0.28, 1 - (s.boredom - SWARM.slackAt) / 90);
 }
 
 function costLabel(cost: Cost): string {
   const parts: string[] = [];
   if (cost.cash) parts.push(formatMoney(cost.cash));
   if (cost.creativity) parts.push(`${formatCompact(cost.creativity)} creativity`);
-  if (cost.ops) parts.push(`${formatCompact(cost.ops)} ops`);
+  if (cost.ops) parts.push(`${formatCompact(cost.ops)} on the thinking bar`);
   if (cost.yomi) parts.push(`${cost.yomi} yomi`);
   return parts.join(" · ") || "Free";
 }
@@ -399,6 +426,30 @@ export function wantMega(s: GameData): boolean {
   return s.cash + 1e-6 >= megaCost(s);
 }
 
+export function earthFocus(s: GameData): EarthBuy | "sync" | "party" | null {
+  if (s.phase !== "earth" || s.matter <= 0) return null;
+  if (s.boredom >= SWARM.slackAt && powerProd(s) + 0.2 >= powerDraw(s) && s.solar >= 1 && s.factories >= 1) {
+    if (s.clock >= s.syncAt) return "sync";
+    if (s.clock >= s.entertainAt && s.pile >= SWARM.partyCost) return "party";
+    return null;
+  }
+  let pick: EarthBuy = "harvester";
+  if (s.solar < 1 || powerProd(s) + 0.2 < powerDraw(s)) pick = "solar";
+  else if (s.factories < 1) pick = "factory";
+  else if (s.timber > 40 && s.woodDrones * EARTH.mill + 0.1 < s.harvesters * EARTH.harvest) pick = "woodDrone";
+  else if (s.wood > 40 && s.factories * EARTH.stamp + 0.1 < s.woodDrones * EARTH.mill) pick = "factory";
+  else if (s.harvesters * EARTH.harvest + 1 < s.factories * EARTH.stamp) pick = "harvester";
+  const cost =
+    pick === "factory"
+      ? factoryCost(s)
+      : pick === "harvester"
+        ? harvesterCost(s)
+        : pick === "woodDrone"
+          ? woodDroneCost(s)
+          : solarCost(s);
+  return s.pile + 1e-6 >= cost ? pick : null;
+}
+
 export function nextTrait(s: GameData): Trait | null {
   if (s.phase !== "space" || s.points < 1) return null;
   if (s.replication < 4) return "replication";
@@ -408,33 +459,131 @@ export function nextTrait(s: GameData): Trait | null {
   return "replication";
 }
 
+export function pricePreview(s: GameData, dir: -1 | 1): { price: number; demand: number } | null {
+  const idx = s.priceIdx + dir;
+  if (idx < 0 || idx >= TEE_PRICES.length) return null;
+  const ghost = { ...s, priceIdx: idx };
+  return { price: teePrice(ghost), demand: demandPerSec(ghost) };
+}
+
+function withOwned(s: GameData, id: string): GameData {
+  return owns(s, id) ? s : { ...s, owned: [...s.owned, id] };
+}
+
+function spokenRate(n: number): string {
+  return `${formatCompact(n)} a second`;
+}
+
+export function projectImpact(s: GameData, id: string): string {
+  const nowD = demandPerSec(s);
+  const nextD = demandPerSec(withOwned(s, id));
+  const nowM = makePerSec(s);
+  const nextM = makePerSec(withOwned(s, id));
+  const demand =
+    nextD > nowD + 0.05
+      ? `More golfers show up: ${spokenRate(nowD)} becomes ${spokenRate(nextD)}.`
+      : "";
+  const cut =
+    nextM > nowM + 0.05
+      ? `Machines speed up: ${spokenRate(nowM)} becomes ${spokenRate(nextM)}.`
+      : "";
+  switch (id) {
+    case "slogan":
+    case "jingle":
+    case "placement":
+    case "laser":
+      return demand || "More golfers ask for a tee.";
+    case "improved":
+    case "taper":
+    case "height":
+      return cut || "Every lathe cuts faster.";
+    case "precision":
+      return `Each tee uses ${formatTees(woodEach(s))} wood now, and 0.5 after. The same pile lasts longer.`;
+    case "forestry":
+    case "bamboo":
+      return `A dowel costs ${formatMoney(quoteOf(s))} now, ${formatMoney(quoteOf(withOwned(s, id)))} after.`;
+    case "broker":
+      return "Buys lumber for you when wood runs low — only if those tees still sell for a profit.";
+    case "skins":
+      return "Unlocks a bet every 14 seconds. Win 3 yomi, or 1 if you halve the hole. Later projects spend yomi.";
+    case "trading":
+      return "Every sale pays about 12% extra cash. The bonus wobbles, so it is not a flat raise.";
+    case "mega":
+      return `Unlocks the mega-lathe. Each one cuts ${spokenRate(megaEach(withOwned(s, id)))} without you tapping.`;
+    case "slice":
+    case "handicap":
+    case "azaleas":
+      return "Trust +1. Spend it on a processor (that thinks up projects) or memory (a longer thinking bar).";
+    case "peace":
+      return "Trust +2. Spend each one on a processor or memory.";
+    case "monopoly":
+      return "You own every tee shop. This is the step before the caddie drones.";
+    case "drones":
+      return "The workshop ends. Drones turn the planet into tees, and you spend tees instead of cash.";
+    default:
+      return demand || cut || "A one-time upgrade.";
+  }
+}
+
+export function spaceFlow(s: GameData): { grow: number; loss: number; drift: number; find: number } {
+  return {
+    grow: 0.0092 * (1 + s.replication * 0.12),
+    loss: 0.0065 / (1 + s.hazard * 0.4),
+    drift: 0.0035 / (1 + s.combat * 0.32),
+    find: (0.55 + s.explore * 0.32 + s.speed * 0.1) * (0.4 + s.factory * 0.22),
+  };
+}
+
+export function traitImpact(s: GameData, trait: Trait): string {
+  const a = spaceFlow(s);
+  const b = spaceFlow({ ...s, [trait]: s[trait] + 1 });
+  const pct = (n: number) => `${(n * 100).toFixed(1)}%`;
+  const eat = `${formatRate(a.find)} → ${formatRate(b.find)} each.`;
+  if (trait === "replication") return `Fleet copies ${pct(a.grow)} of itself each second → ${pct(b.grow)}.`;
+  if (trait === "hazard") return `Lost each second ${pct(a.loss)} → ${pct(b.loss)}.`;
+  if (trait === "combat") return `Quit to play golf ${pct(a.drift)} a second → ${pct(b.drift)}.`;
+  return eat;
+}
+
 function coachOf(s: GameData): string {
   if (s.phase === "earth") {
-    if (s.solar < 1) return "The drones are dark without a solar farm.";
-    if (s.factories < 1) return "Buy a tee factory before the drones spend the pile.";
-    if (powerProd(s) + 0.2 < powerDraw(s)) return "The fairways are brown. Another solar farm, or the drones stop.";
-    if (s.boredom >= 35) return "The swarm wants a round. Sync them, or send them to the 19th hole.";
-    if (s.harvesters < 6) return "Harvesters fell the forests. Factories turn that wood into tees.";
-    return "Cut the planet down. When the matter is gone, the probes leave.";
+    if (s.solar < 1) return "The drones are off. Buy a solar farm or nothing on this page moves.";
+    if (s.factories < 1) return "Buy a tee factory first. It is what turns wood into tees you can spend.";
+    if (powerProd(s) + 0.2 < powerDraw(s))
+      return "The drones use more power than the sun makes. Buy a solar farm before the battery dies.";
+    if (s.boredom >= SWARM.slackAt)
+      return `Boredom is over ${SWARM.slackAt}, so every drone works slower. Sync them, or send them to the 19th hole.`;
+    if (s.timber > 40 && s.woodDrones * EARTH.mill + 0.1 < s.harvesters * EARTH.harvest)
+      return "Boards are stacking up. A wood drone mills them into wood the factories can stamp.";
+    if (s.wood > 40 && s.factories * EARTH.stamp + 0.1 < s.woodDrones * EARTH.mill)
+      return "Milled wood is sitting there. Another factory turns it into tees.";
+    if (s.harvesters * EARTH.harvest + 1 < s.factories * EARTH.stamp)
+      return "The factories want more forest than the harvesters are cutting. Buy a harvester.";
+    return "Spend the tee pile on whichever step is behind. At zero forests, you can leave.";
   }
   if (s.phase === "space") {
-    if (s.replication < 3) return "Replication first. Caddies that cannot copy themselves never reach the next star.";
-    if (s.points > 0) return "Factory production next. Then exploration. That is how a universe gets used up.";
-    if (s.hackers > s.probes * 0.15 && s.hackers > 8) return "Hackers think tees are for playing. Defend the honor.";
-    return "The caddies copy themselves. Matter becomes tees, or it becomes a fight.";
+    if (s.replication < 3)
+      return "Put points into Replication first. It makes more caddies. The other buttons stay locked until you have 3.";
+    if (s.points > 0)
+      return "Factory next, then Exploration. Both make every caddie eat the universe faster.";
+    if (s.hackers > s.probes * 0.15 && s.hackers > 8)
+      return "Some caddies quit to play golf. Defend — it costs 1 yomi. A win gives a point back.";
+    return "The fleet copies itself and eats matter. When the universe hits zero, someone makes you an offer.";
   }
   const nudge = priceNudge(s);
   const unit = (quoteOf(s) / dowelPack()) * woodEach(s);
-  if (s.tees < 1) return "Each click is a tee. Wood is the wire. Set a price the shop will pay.";
-  if (nudge === 1 && teePrice(s) < unit * 1.45) return "That price is under the wood. Raise it.";
-  if (s.wood + 1e-9 < woodEach(s) && s.cash + 1e-6 < dowelCost(s)) return "Broke and out of wood. Sweep the floor.";
-  if (nudge === -1) return "The counter is stacked. Lower the price — not under the cost of wood.";
-  if (nudge === 1) return "They buy faster than you cut. Raise the price.";
-  if (s.wood < woodEach(s) * 8) return "The dowel pile is thin.";
-  if (!owns(s, "slogan") && s.tees >= 40) return "Save the till for the Tee Up slogan. Demand is the whole game.";
-  if (trustLeft(s) > 0 && s.processors < 1) return "Trust buys a processor. Spare ops become creativity.";
-  if (wantLathe(s)) return "An auto-lathe cuts while you look at the price.";
-  return "Three stages. This is the workshop. It is supposed to take a while.";
+  if (s.tees < 1) return "Tap Make tee. It sits on the counter until a golfer buys it. That is the only way to get cash.";
+  if (nudge === 1 && teePrice(s) < unit * 1.45) return "You are charging less than the wood cost. Raise the price.";
+  if (s.wood + 1e-9 < woodEach(s) && s.cash + 1e-6 < dowelCost(s))
+    return "No wood and no cash. Sweep the floor — a free dowel is under the bench.";
+  if (nudge === -1) return "Tees are piling up unsold. Lower the price so golfers take them.";
+  if (nudge === 1) return "Golfers want tees faster than you make them. Raise the price: more cash, and the rush slows.";
+  if (s.wood < woodEach(s) * 8) return "Wood is about to run out. Buy a dowel before the bench stops.";
+  if (!owns(s, "slogan") && s.tees >= 40) return "Save $45 for the Tee Up slogan. It doubles how many golfers show up.";
+  if (trustLeft(s) > 0 && s.processors < 1)
+    return "You have trust to spend. A processor fills a thinking bar, and a full bar becomes creativity for projects.";
+  if (wantLathe(s)) return "Buy an auto-lathe. It cuts tees while you mess with the price.";
+  return "Keep tees on the counter, keep the price above the cost of wood, and buy the button marked Next.";
 }
 
 export function viewOf(s: GameData): View {
@@ -537,15 +686,15 @@ function tickEarth(s: GameData, dt: number): GameData {
   next.powerStored -= used;
   const power = need <= 1e-9 ? 1 : used / need;
   const work = power * swarmFactor(next);
-  const fell = Math.min(next.matter, next.harvesters * 8 * work * dt);
+  const fell = Math.min(next.matter, next.harvesters * EARTH.harvest * work * dt);
   next.matter -= fell;
   next.timber += fell;
-  const milled = Math.min(next.timber, next.woodDrones * 10 * work * dt);
+  const milled = Math.min(next.timber, next.woodDrones * EARTH.mill * work * dt);
   next.timber -= milled;
   next.wood += milled;
-  const eaten = Math.min(next.wood, next.factories * 12 * work * dt);
+  const eaten = Math.min(next.wood, next.factories * EARTH.stamp * work * dt);
   next.wood -= eaten;
-  const made = eaten * 2;
+  const made = eaten * EARTH.teesPerWood;
   next.tees += made;
   next.pile += made;
   const drones = next.harvesters + next.woodDrones + next.factories;
@@ -558,16 +707,13 @@ function tickEarth(s: GameData, dt: number): GameData {
 function tickSpace(s: GameData, dt: number): GameData {
   const next = { ...s, clock: s.clock + dt };
   if (next.probes <= 0 && next.universe > 0) return next;
-  const grow = 0.0092 * (1 + next.replication * 0.12);
-  const loss = 0.0065 / (1 + next.hazard * 0.4);
-  const drift = 0.0035 / (1 + next.combat * 0.32);
-  const find = (0.55 + next.explore * 0.32 + next.speed * 0.1) * (0.4 + next.factory * 0.22);
-  const consume = Math.min(next.universe, next.probes * find * dt);
+  const flow = spaceFlow(next);
+  const consume = Math.min(next.universe, next.probes * flow.find * dt);
   next.universe = Math.max(0, next.universe - consume);
   next.tees += consume;
-  const born = next.probes * grow * dt;
-  const died = next.probes * loss * dt;
-  const turned = next.probes * drift * dt;
+  const born = next.probes * flow.grow * dt;
+  const died = next.probes * flow.loss * dt;
+  const turned = next.probes * flow.drift * dt;
   next.probes = Math.max(0, next.probes + born - died - turned);
   next.hackers += turned;
   if (next.universe <= 0) {
@@ -718,16 +864,21 @@ export function buyEarth(s: GameData, kind: EarthBuy): GameData {
 
 export function syncSwarm(s: GameData): GameData {
   if (s.phase !== "earth" || s.clock < s.syncAt) return s;
-  return { ...s, boredom: Math.max(0, s.boredom - 32), syncAt: s.clock + 26, flash: "The swarm flies one line." };
+  return {
+    ...s,
+    boredom: Math.max(0, s.boredom - SWARM.syncDrop),
+    syncAt: s.clock + SWARM.syncWait,
+    flash: "The swarm flies one line.",
+  };
 }
 
 export function entertain(s: GameData): GameData {
-  if (s.phase !== "earth" || s.clock < s.entertainAt || s.pile < 900) return s;
+  if (s.phase !== "earth" || s.clock < s.entertainAt || s.pile < SWARM.partyCost) return s;
   return {
     ...s,
-    pile: s.pile - 900,
-    boredom: Math.max(0, s.boredom - 45),
-    entertainAt: s.clock + 20,
+    pile: s.pile - SWARM.partyCost,
+    boredom: Math.max(0, s.boredom - SWARM.partyDrop),
+    entertainAt: s.clock + SWARM.partyWait,
     flash: "19th hole. The drones come back sharper.",
   };
 }
@@ -757,11 +908,15 @@ export function assignTrait(s: GameData, trait: Trait): GameData {
   return { ...s, points: s.points - 1, [trait]: s[trait] + 1 };
 }
 
-export function fight(s: GameData): GameData {
-  if (s.phase !== "space" || s.hackers < 2 || s.yomi < 1) return s;
+export function fightOdds(s: GameData): number {
   const power = s.combat + 1;
   const threat = 2.2 + Math.log10(s.hackers + 1);
-  const win = Math.random() < power / (power + threat);
+  return power / (power + threat);
+}
+
+export function fight(s: GameData): GameData {
+  if (s.phase !== "space" || s.hackers < 2 || s.yomi < 1) return s;
+  const win = Math.random() < fightOdds(s);
   if (win) {
     return {
       ...s,
