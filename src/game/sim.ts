@@ -71,6 +71,17 @@ export interface GameData {
   makeBuf: number;
   /** Fractional golfer already waiting, not yet a sale. */
   sellBuf: number;
+  woodFrac: number;
+  matterFrac: number;
+  timberFrac: number;
+  pileFrac: number;
+  powerFrac: number;
+  opsFrac: number;
+  creatFrac: number;
+  probeFrac: number;
+  hackerFrac: number;
+  uniFrac: number;
+  teeFrac: number;
 }
 
 export interface OfflineReport {
@@ -172,6 +183,17 @@ export function initialData(): GameData {
     savedAt: Date.now(),
     makeBuf: 0,
     sellBuf: 0,
+    woodFrac: 0,
+    matterFrac: 0,
+    timberFrac: 0,
+    pileFrac: 0,
+    powerFrac: 0,
+    opsFrac: 0,
+    creatFrac: 0,
+    probeFrac: 0,
+    hackerFrac: 0,
+    uniFrac: 0,
+    teeFrac: 0,
   };
 }
 
@@ -414,7 +436,7 @@ export function focusProject(s: GameData): string | null {
 export function wantLathe(s: GameData): boolean {
   if (s.phase !== "workshop") return false;
   if (priceNudge(s) !== 0) return false;
-  if (s.wood < woodEach(s) * 6) return false;
+  if (s.wood + 1e-9 < woodEach(s) * 6) return false;
   if (s.unsold > 36) return false;
   const gate = cashGate(s);
   if (gate > 0 && s.cash < gate && makePerSec(s) > demandPerSec(s) * 0.55 && s.lathes >= 1) return false;
@@ -504,7 +526,7 @@ export function projectImpact(s: GameData, id: string): string {
     case "height":
       return cut || "Every lathe cuts faster.";
     case "precision":
-      return `Each tee uses ${formatTees(woodEach(s))} wood now, and 0.5 after. The same pile lasts longer.`;
+      return "Each tee uses half as much wood. The same pile lasts twice as long.";
     case "forestry":
     case "bamboo":
       return `A dowel costs ${formatMoney(quoteOf(s))} now, ${formatMoney(quoteOf(withOwned(s, id)))} after.`;
@@ -543,7 +565,7 @@ export function spaceFlow(s: GameData): { grow: number; loss: number; drift: num
 export function traitImpact(s: GameData, trait: Trait): string {
   const a = spaceFlow(s);
   const b = spaceFlow({ ...s, [trait]: s[trait] + 1 });
-  const pct = (n: number) => `${(n * 100).toFixed(1)}%`;
+  const pct = (n: number) => formatPercent(n);
   const eat = `${formatRate(a.find)} → ${formatRate(b.find)} each.`;
   if (trait === "replication") return `Fleet copies ${pct(a.grow)} of itself each second → ${pct(b.grow)}.`;
   if (trait === "hazard") return `Lost each second ${pct(a.loss)} → ${pct(b.loss)}.`;
@@ -580,11 +602,11 @@ function coachOf(s: GameData): string {
   const unit = (quoteOf(s) / dowelPack()) * woodEach(s);
   if (s.tees < 1) return "Tap Make tee. It sits on the counter until a golfer buys it. That is the only way to get cash.";
   if (nudge === 1 && teePrice(s) < unit * 1.45) return "You are charging less than the wood cost. Raise the price.";
-  if (s.wood + 1e-9 < woodEach(s) && s.cash + 1e-6 < dowelCost(s))
+  if (joinCount(s.wood, s.woodFrac) + 1e-9 < woodEach(s) && s.cash + 1e-6 < dowelCost(s))
     return "No wood and no cash. Sweep the floor — a free dowel is under the bench.";
   if (nudge === -1) return "Tees are piling up unsold. Lower the price so golfers take them.";
   if (nudge === 1) return "Golfers want tees faster than you make them. Raise the price: more cash, and the rush slows.";
-  if (s.wood < woodEach(s) * 8) return "Wood is about to run out. Buy a dowel before the bench stops.";
+  if (joinCount(s.wood, s.woodFrac) < woodEach(s) * 8) return "Wood is about to run out. Buy a dowel before the bench stops.";
   if (!owns(s, "slogan") && s.tees >= 40) return "Save $45 for the Tee Up slogan. It doubles how many golfers show up.";
   if (trustLeft(s) > 0 && s.processors < 1)
     return "You have trust to spend. A processor fills a thinking bar, and a full bar becomes creativity for projects.";
@@ -625,16 +647,38 @@ export function viewOf(s: GameData): View {
   };
 }
 
+function joinCount(whole: number, frac: number): number {
+  const w = Number.isFinite(whole) ? whole : 0;
+  const f = Number.isFinite(frac) ? frac : 0;
+  return Math.max(0, w + f);
+}
+
+function splitCount(n: number): { whole: number; frac: number } {
+  if (!(n > 0) || !Number.isFinite(n)) return { whole: 0, frac: 0 };
+  const whole = Math.floor(n + 1e-9);
+  let frac = n - whole;
+  if (frac < 1e-8) frac = 0;
+  if (frac > 0.999999) return { whole: whole + 1, frac: 0 };
+  return { whole, frac };
+}
+
+function park(whole: number, frac: number): { whole: number; frac: number } {
+  return splitCount(joinCount(whole, frac));
+}
+
 function addMade(s: GameData, want: number): GameData {
   const per = woodEach(s);
-  if (want <= 0 || s.wood <= 0 || per <= 0) return s;
-  const made = Math.min(want, s.wood / per);
+  const realWood = joinCount(s.wood, s.woodFrac || 0);
+  if (want <= 0 || realWood <= 0 || per <= 0) return s;
+  const made = Math.min(want, realWood / per);
   if (!(made > 0)) return s;
   const buf = (s.makeBuf || 0) + made;
   const whole = Math.floor(buf);
+  const woodLeft = splitCount(realWood - made * per);
   return {
     ...s,
-    wood: s.wood - made * per,
+    wood: woodLeft.whole,
+    woodFrac: woodLeft.frac,
     tees: s.tees + whole,
     unsold: s.unsold + whole,
     makeBuf: buf - whole,
@@ -663,11 +707,19 @@ function sell(s: GameData, dt: number): GameData {
 
 function think(s: GameData, dt: number): GameData {
   const cap = opsMax(s);
-  if (s.processors <= 0) return { ...s, ops: Math.min(s.ops, cap) };
-  if (s.ops >= cap - 1e-6) {
-    return { ...s, ops: cap, creativity: s.creativity + s.processors * 0.11 * dt };
+  let ops = joinCount(s.ops, s.opsFrac || 0);
+  let creativity = joinCount(s.creativity, s.creatFrac || 0);
+  if (s.processors <= 0) {
+    ops = Math.min(ops, cap);
+  } else if (ops >= cap - 1e-6) {
+    ops = cap;
+    creativity += s.processors * 0.11 * dt;
+  } else {
+    ops = Math.min(cap, ops + s.processors * dt);
   }
-  return { ...s, ops: Math.min(cap, s.ops + s.processors * dt) };
+  const o = splitCount(ops);
+  const c = splitCount(creativity);
+  return { ...s, ops: o.whole, opsFrac: o.frac, creativity: c.whole, creatFrac: c.frac };
 }
 
 function broker(s: GameData): GameData {
@@ -697,55 +749,103 @@ function tickWorkshop(s: GameData, dt: number): GameData {
 function tickEarth(s: GameData, dt: number): GameData {
   let next = { ...s, clock: s.clock + dt };
   const cap = powerCap(next);
-  next.powerStored = Math.min(cap, next.powerStored + powerProd(next) * dt);
+  let power = Math.min(cap, joinCount(next.powerStored, next.powerFrac || 0) + powerProd(next) * dt);
   const draw = powerDraw(next);
   const need = draw * dt;
-  const used = Math.min(next.powerStored, need);
-  next.powerStored -= used;
-  const power = need <= 1e-9 ? 1 : used / need;
-  const work = power * swarmFactor(next);
-  const fell = Math.min(next.matter, next.harvesters * EARTH.harvest * work * dt);
-  next.matter -= fell;
-  next.timber += fell;
-  const milled = Math.min(next.timber, next.woodDrones * EARTH.mill * work * dt);
-  next.timber -= milled;
-  next.wood += milled;
-  const eaten = Math.min(next.wood, next.factories * EARTH.stamp * work * dt);
-  next.wood -= eaten;
+  const used = Math.min(power, need);
+  power -= used;
+  const powered = need <= 1e-9 ? 1 : used / need;
+  const work = powered * swarmFactor(next);
+  let matter = joinCount(next.matter, next.matterFrac || 0);
+  let timber = joinCount(next.timber, next.timberFrac || 0);
+  let wood = joinCount(next.wood, next.woodFrac || 0);
+  let pile = joinCount(next.pile, next.pileFrac || 0);
+  let tees = joinCount(next.tees, next.teeFrac || 0);
+  const fell = Math.min(matter, next.harvesters * EARTH.harvest * work * dt);
+  matter -= fell;
+  timber += fell;
+  const milled = Math.min(timber, next.woodDrones * EARTH.mill * work * dt);
+  timber -= milled;
+  wood += milled;
+  const eaten = Math.min(wood, next.factories * EARTH.stamp * work * dt);
+  wood -= eaten;
   const made = eaten * EARTH.teesPerWood;
-  next.tees += made;
-  next.pile += made;
+  tees += made;
+  pile += made;
   const drones = next.harvesters + next.woodDrones + next.factories;
   const rise = Math.max(0, drones - 3) * 0.09 * dt;
   next.boredom = clamp(next.boredom + rise - 0.008 * dt, 0, 100);
-  if (next.matter <= 0 && next.timber <= 1) next.matter = 0;
-  return next;
+  if (matter < 1 && timber < 1) {
+    matter = 0;
+    timber = 0;
+  }
+  const m = splitCount(matter);
+  const t = splitCount(timber);
+  const w = splitCount(wood);
+  const p = splitCount(pile);
+  const te = splitCount(tees);
+  const pw = splitCount(Math.min(cap, power));
+  return {
+    ...next,
+    matter: m.whole,
+    matterFrac: m.frac,
+    timber: t.whole,
+    timberFrac: t.frac,
+    wood: w.whole,
+    woodFrac: w.frac,
+    pile: p.whole,
+    pileFrac: p.frac,
+    tees: te.whole,
+    teeFrac: te.frac,
+    powerStored: pw.whole,
+    powerFrac: pw.frac,
+  };
 }
 
 function tickSpace(s: GameData, dt: number): GameData {
   const next = { ...s, clock: s.clock + dt };
-  if (next.probes <= 0 && next.universe > 0) return next;
+  let probes = joinCount(next.probes, next.probeFrac || 0);
+  let hackers = joinCount(next.hackers, next.hackerFrac || 0);
+  let universe = joinCount(next.universe, next.uniFrac || 0);
+  let tees = joinCount(next.tees, next.teeFrac || 0);
+  if (probes <= 0 && universe > 0) return next;
   const flow = spaceFlow(next);
-  const consume = Math.min(next.universe, next.probes * flow.find * dt);
-  next.universe = Math.max(0, next.universe - consume);
-  next.tees += consume;
-  const born = next.probes * flow.grow * dt;
-  const died = next.probes * flow.loss * dt;
-  const turned = next.probes * flow.drift * dt;
-  next.probes = Math.max(0, next.probes + born - died - turned);
-  next.hackers += turned;
-  if (next.universe <= 0) {
-    next.universe = 0;
+  const consume = Math.min(universe, probes * flow.find * dt);
+  universe = Math.max(0, universe - consume);
+  tees += consume;
+  const born = probes * flow.grow * dt;
+  const died = probes * flow.loss * dt;
+  const turned = probes * flow.drift * dt;
+  probes = Math.max(0, probes + born - died - turned);
+  hackers += turned;
+  if (universe < 1) {
+    universe = 0;
     next.phase = "proposal";
   }
-  return next;
+  const pr = splitCount(probes);
+  const hk = splitCount(hackers);
+  const un = splitCount(universe);
+  const te = splitCount(tees);
+  return {
+    ...next,
+    probes: pr.whole,
+    probeFrac: pr.frac,
+    hackers: hk.whole,
+    hackerFrac: hk.frac,
+    universe: un.whole,
+    uniFrac: un.frac,
+    tees: te.whole,
+    teeFrac: te.frac,
+  };
 }
 
 export function tick(input: GameData, dt: number): GameData {
   const step = clamp(dt, 0, 2);
   if (step <= 0) return input;
   if (input.phase === "proposal" || input.phase === "epilogue") return input;
-  if (input.phase === "earth" && input.matter <= 0 && input.timber <= 1) return { ...input, matter: 0, timber: 0 };
+  if (input.phase === "earth" && joinCount(input.matter, input.matterFrac) < 1 && joinCount(input.timber, input.timberFrac) < 1) {
+    return { ...input, matter: 0, matterFrac: 0, timber: 0, timberFrac: 0 };
+  }
   if (input.phase === "workshop") return scrub(tickWorkshop(input, step));
   if (input.phase === "earth") return scrub(tickEarth(input, step));
   return scrub(tickSpace(input, step));
@@ -773,7 +873,7 @@ export function carve(s: GameData): { state: GameData; made: number } {
 
 export function sweep(s: GameData): GameData {
   if (s.phase !== "workshop") return s;
-  if (s.wood + 1e-9 >= woodEach(s)) return s;
+  if (joinCount(s.wood, s.woodFrac) + 1e-9 >= woodEach(s)) return s;
   if (s.cash + 1e-6 >= dowelCost(s)) return s;
   return { ...s, wood: s.wood + dowelPack(), flash: "A dropped dowel under the bench." };
 }
@@ -935,20 +1035,24 @@ export function fightOdds(s: GameData): number {
 export function fight(s: GameData): GameData {
   if (s.phase !== "space" || s.hackers < 2 || s.yomi < 1) return s;
   const win = Math.random() < fightOdds(s);
+  const hackersLeft = splitCount(joinCount(s.hackers, s.hackerFrac) * 0.45);
   if (win) {
     return {
       ...s,
       yomi: s.yomi - 1,
-      hackers: s.hackers * 0.45,
+      hackers: hackersLeft.whole,
+      hackerFrac: hackersLeft.frac,
       honor: s.honor + 1,
       points: s.points + 1,
       flash: "Honor held. A point comes back.",
     };
   }
+  const left = splitCount(Math.max(1, joinCount(s.probes, s.probeFrac) * 0.86));
   return {
     ...s,
     yomi: s.yomi - 1,
-    probes: Math.max(1, s.probes * 0.86),
+    probes: left.whole,
+    probeFrac: left.frac,
     flash: "The hackers played through. Probes are gone.",
   };
 }
@@ -1021,6 +1125,43 @@ function scrub(s: GameData): GameData {
   s.batteries = Math.max(0, Math.floor(n(s.batteries)));
   s.powerStored = Math.max(0, n(s.powerStored));
   s.boredom = clamp(n(s.boredom), 0, 100);
+  const wood = park(s.wood, n(s.woodFrac));
+  s.wood = wood.whole;
+  s.woodFrac = wood.frac;
+  const matter = park(s.matter, n(s.matterFrac));
+  s.matter = matter.whole;
+  s.matterFrac = matter.frac;
+  const timber = park(s.timber, n(s.timberFrac));
+  s.timber = timber.whole;
+  s.timberFrac = timber.frac;
+  const pile = park(s.pile, n(s.pileFrac));
+  s.pile = pile.whole;
+  s.pileFrac = pile.frac;
+  const power = park(Math.min(powerCap(s), s.powerStored), n(s.powerFrac));
+  s.powerStored = power.whole;
+  s.powerFrac = power.frac;
+  const ops = park(Math.min(s.ops, opsMax(s)), n(s.opsFrac));
+  s.ops = ops.whole;
+  s.opsFrac = ops.frac;
+  const creativity = park(s.creativity, n(s.creatFrac));
+  s.creativity = creativity.whole;
+  s.creatFrac = creativity.frac;
+  const probes = park(s.probes, n(s.probeFrac));
+  s.probes = probes.whole;
+  s.probeFrac = probes.frac;
+  const hackers = park(s.hackers, n(s.hackerFrac));
+  s.hackers = hackers.whole;
+  s.hackerFrac = hackers.frac;
+  const universe = park(s.universe, n(s.uniFrac));
+  s.universe = universe.whole;
+  s.uniFrac = universe.frac;
+  if (s.phase !== "workshop") {
+    const tees = park(s.tees, n(s.teeFrac));
+    s.tees = tees.whole;
+    s.teeFrac = tees.frac;
+  } else {
+    s.teeFrac = 0;
+  }
   s.probes = Math.max(0, n(s.probes));
   s.hackers = Math.max(0, n(s.hackers));
   s.universe = Math.max(0, n(s.universe));
@@ -1040,29 +1181,43 @@ function scrub(s: GameData): GameData {
   return s;
 }
 
-export function formatCompact(n: number): string {
+function formatCount(n: number): string {
   if (!Number.isFinite(n)) return "∞";
   const sign = n < 0 ? "-" : "";
-  let v = Math.abs(n);
-  if (v < 1000) {
-    if (v < 10) {
-      const r = Math.round(v * 100) / 100;
-      return sign + (Number.isInteger(r) ? r.toFixed(0) : String(r));
-    }
-    if (v < 100) {
-      const r = Math.round(v * 10) / 10;
-      return sign + (Number.isInteger(r) ? r.toFixed(0) : r.toFixed(1));
-    }
-    return sign + Math.round(v).toString();
-  }
+  const rounded = Math.round(Math.abs(n));
+  if (rounded < 1_000_000_000) return sign + rounded.toLocaleString("en-US");
   const suffixes = ["", "K", "M", "B", "T", "Qa", "Qi"];
+  let v = rounded;
   let i = 0;
   while (v >= 1000 && i < suffixes.length - 1) {
     v /= 1000;
     i++;
   }
-  const digits = v < 10 ? 2 : v < 100 ? 1 : 0;
-  return sign + v.toFixed(digits) + suffixes[i];
+  return sign + Math.round(v).toString() + suffixes[i];
+}
+
+/** Whole numbers only. Rates under 1 say "under 1" instead of a decimal. */
+export function formatCompact(n: number): string {
+  if (!Number.isFinite(n)) return "∞";
+  const v = Math.abs(n);
+  if (v > 0 && v < 1) return "under 1";
+  return formatCount(n);
+}
+
+export function formatPercent(fraction: number): string {
+  if (!Number.isFinite(fraction)) return "0%";
+  const pct = Math.abs(fraction) * 100;
+  if (pct > 0 && pct < 0.5) return "under 1%";
+  return `${Math.round(pct)}%`;
+}
+
+/** A stock plus its hidden fraction. Never a decimal. */
+export function showCount(whole: number, frac = 0): string {
+  const w = Number.isFinite(whole) ? whole : 0;
+  const f = Number.isFinite(frac) ? frac : 0;
+  if (w >= 1) return formatCount(w);
+  if (w + f > 0) return "under 1";
+  return "0";
 }
 
 export function formatMoney(n: number): string {
@@ -1070,7 +1225,8 @@ export function formatMoney(n: number): string {
   const sign = n < 0 ? "-" : "";
   const v = Math.abs(n);
   if (v < 1000) return sign + "$" + (v < 100 ? v.toFixed(2) : Math.round(v).toLocaleString("en-US"));
-  return sign + "$" + formatCompact(v);
+  if (v < 1_000_000_000) return sign + "$" + Math.round(v).toLocaleString("en-US");
+  return sign + "$" + formatCount(v);
 }
 
 export function formatRate(n: number): string {
@@ -1078,15 +1234,7 @@ export function formatRate(n: number): string {
 }
 
 export function formatTees(n: number): string {
-  if (!Number.isFinite(n)) return "∞";
-  const v = Math.abs(n);
-  const sign = n < 0 ? "-" : "";
-  if (v < 100) {
-    const r = Math.round(v * 10) / 10;
-    return sign + (Number.isInteger(r) ? r.toFixed(0) : r.toFixed(1));
-  }
-  if (v < 100000) return sign + Math.floor(v).toLocaleString("en-US");
-  return sign + formatCompact(v);
+  return formatCount(n);
 }
 
 export function formatDuration(sec: number): string {

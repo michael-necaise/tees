@@ -7,6 +7,7 @@ import {
   formatCompact,
   formatDuration,
   formatMoney,
+  formatPercent,
   formatTees,
   fightOdds,
   earthFocus,
@@ -16,6 +17,7 @@ import {
   priceNudge,
   pricePreview,
   projectImpact,
+  showCount,
   spaceFlow,
   SWARM,
   TRAITS,
@@ -217,7 +219,8 @@ function Workshop() {
   const s = useGame();
   const v = viewOf(s);
   const [pops, setPops] = useState<{ id: number; n: number }[]>([]);
-  const out = s.wood + 1e-9 < v.woodEach;
+  const heldWood = s.wood + (s.woodFrac || 0);
+  const out = heldWood + 1e-9 < v.woodEach;
   const nudge = priceNudge(s);
   const nextProject = focusProject(s);
   const woodHot = out && s.cash + 1e-6 >= v.dowelCost;
@@ -246,17 +249,18 @@ function Workshop() {
   const woodUnit = (v.quote / v.dowelWood) * v.woodEach;
   const supply = Math.max(v.make, s.unsold > 0 ? v.demand : 0);
   const income = Math.min(v.demand, supply) * v.price;
-  const tapsLeft = s.wood / Math.max(0.01, v.woodEach);
+  const tapsLeft = heldWood / Math.max(0.01, v.woodEach);
+  const woodEachLabel = v.woodEach < 1 ? "half a wood" : `${formatTees(v.woodEach)} wood`;
   const woodHint =
-    s.wood + 1e-9 < v.woodEach
+    heldWood + 1e-9 < v.woodEach
       ? "Out. Buy a dowel."
       : v.make > 0.05
-        ? `Lasts about ${formatDuration(s.wood / (v.make * v.woodEach))}`
-        : `About ${formatTees(tapsLeft)} taps left`;
+        ? `Lasts about ${formatDuration(heldWood / (v.make * v.woodEach))}`
+        : `About ${formatTees(Math.round(tapsLeft))} taps left`;
   const early = s.lathes === 0 && s.tees < 18 && s.wood <= 100;
   const dowelDetail =
     v.make < 0.05
-      ? `Adds ${formatTees(v.dowelWood)} wood. Each tee uses ${formatTees(v.woodEach)}, so that is ${formatTees(v.dowelWood / v.woodEach)} taps.`
+      ? `Adds ${formatTees(v.dowelWood)} wood. Each tee uses ${woodEachLabel}, so that is ${formatTees(Math.round(v.dowelWood / v.woodEach))} taps.`
       : `Adds ${formatTees(v.dowelWood)} wood. The machines burn through it in about ${formatDuration(v.dowelWood / (v.make * v.woodEach))}.`;
 
   return (
@@ -277,14 +281,18 @@ function Workshop() {
           v={formatMoney(s.cash)}
           hint={income > 0.005 ? `About ${formatMoney(income)} a second` : "Appears when a tee sells"}
         />
-        <Stat k="Wood" v={formatTees(s.wood)} hint={woodHint} />
+        <Stat k="Wood" v={showCount(s.wood, s.woodFrac)} hint={woodHint} />
       </dl>
       {v.make > 0.05 && (
         <p className="mt-2 text-sm leading-snug">
           {v.make + 0.05 < v.demand
-            ? `Machines cut ${perSec(v.make)}. Golfers want ${perSec(v.demand)}. You are behind — raise the price or cut faster.`
+            ? formatCompact(v.make) === formatCompact(v.demand)
+              ? "Golfers want a little more than the machines cut. Raise the price or cut faster."
+              : `Machines cut ${perSec(v.make)}. Golfers want ${perSec(v.demand)}. You are behind — raise the price or cut faster.`
             : v.make > v.demand * 1.15
-              ? `Machines cut ${perSec(v.make)}, but golfers only want ${perSec(v.demand)}. Lower the price or they will stack up.`
+              ? formatCompact(v.make) === formatCompact(v.demand)
+                ? "The machines cut a little faster than golfers buy. Lower the price or tees will stack up."
+                : `Machines cut ${perSec(v.make)}, but golfers only want ${perSec(v.demand)}. Lower the price or they will stack up.`
               : `Machines cut ${perSec(v.make)}, close to what golfers want.`}
         </p>
       )}
@@ -425,7 +433,7 @@ function Workshop() {
               <div className="flex justify-between gap-2">
                 <span>Thinking</span>
                 <span className="tabular-nums">
-                  {formatCompact(s.ops)} / {formatCompact(v.opsMax)}
+                  {showCount(s.ops, s.opsFrac)} / {formatTees(v.opsMax)}
                 </span>
               </div>
               <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-ink/10">
@@ -435,7 +443,7 @@ function Workshop() {
                 />
               </div>
               <p className="mt-2 text-xs leading-snug text-ink/60">
-                Creativity {formatCompact(s.creativity)}. A full bar adds more. Projects spend it.
+                Creativity {showCount(s.creativity, s.creatFrac)}. A full bar adds more. Projects spend it.
               </p>
             </div>
           )}
@@ -521,20 +529,23 @@ function Planet() {
         Harvesters knock forests into boards. Wood drones mill the boards. Factories stamp that wood into tees you spend
         on more drones.
       </p>
-      <p className="mt-4 font-display text-6xl leading-none tabular-nums">{formatTees(s.matter)}</p>
+      <p className="mt-4 font-display text-6xl leading-none tabular-nums">{showCount(s.matter, s.matterFrac)}</p>
       <p className="mt-1 text-sm text-ink/70">forests left</p>
 
       <dl className="mt-4 grid grid-cols-2 gap-x-3 gap-y-3 border-t border-ink/10 pt-3">
-        <Stat k="Boards in the yard" v={formatTees(s.timber)} hint={`${formatCompact(fell)} a second, knocked down`} />
-        <Stat k="Wood ready" v={formatTees(s.wood)} hint={`${formatCompact(milled)} a second, milled`} />
-        <Stat k="Tee pile" v={formatTees(s.pile)} hint={`${formatCompact(stamped)} a second, added`} />
-        <Stat k="Power stored" v={`${formatCompact(s.powerStored)} / ${formatCompact(v.powerCap)}`} hint="Drones stop when this hits 0" />
+        <Stat k="Boards in the yard" v={showCount(s.timber, s.timberFrac)} hint={`${formatCompact(fell)} a second, knocked down`} />
+        <Stat k="Wood ready" v={showCount(s.wood, s.woodFrac)} hint={`${formatCompact(milled)} a second, milled`} />
+        <Stat k="Tee pile" v={showCount(s.pile, s.pileFrac)} hint={`${formatCompact(stamped)} a second, added`} />
+        <Stat
+          k="Power stored"
+          v={`${showCount(s.powerStored, s.powerFrac)} / ${formatTees(v.powerCap)}`}
+          hint="Drones stop when this hits 0"
+        />
       </dl>
       <p className="mt-3 text-sm leading-snug">
-        The sun makes {formatCompact(v.powerProd)} a second. The drones use {formatCompact(v.powerDraw)} a second.
         {v.powerProd + 0.2 < v.powerDraw
-          ? " That is a shortfall. Stored power will run out and they stop."
-          : " The sun is covering them."}
+          ? `The drones use more power than the sun makes (${formatCompact(v.powerProd)} a second). Stored power will run out and they stop.`
+          : `The sun makes ${formatCompact(v.powerProd)} a second and covers the drones.`}
       </p>
       <div className="mt-3">
         <div className="flex justify-between text-xs text-ink/60">
@@ -654,20 +665,20 @@ function Stars() {
         A point buys one upgrade. Replication makes more caddies. Everything else makes each caddie better at eating
         matter.
       </p>
-      <p className="mt-4 font-display text-6xl leading-none tabular-nums">{formatTees(s.universe)}</p>
+      <p className="mt-4 font-display text-6xl leading-none tabular-nums">{showCount(s.universe, s.uniFrac)}</p>
       <p className="mt-1 text-sm text-ink/70">universe left to turn into tees</p>
       <dl className="mt-4 grid grid-cols-2 gap-x-3 gap-y-3 border-t border-ink/10 pt-3">
-        <Stat k="Caddies" v={formatTees(Math.floor(s.probes))} hint={`Eating ${formatCompact(s.probes * flow.find)} a second`} />
-        <Stat k="Quit to play" v={formatTees(Math.floor(s.hackers))} hint="They are not making tees" />
+        <Stat k="Caddies" v={showCount(s.probes, s.probeFrac)} hint={`Eating ${formatCompact(s.probes * flow.find)} a second`} />
+        <Stat k="Quit to play" v={showCount(s.hackers, s.hackerFrac)} hint="They are not making tees" />
         <Stat k="Points" v={String(s.points)} hint="One point, one upgrade" />
         <Stat k="Honor" v={String(s.honor)} hint="Fights you have won" />
       </dl>
       <p className="mt-3 text-sm leading-snug">
-        Each second they copy {(flow.grow * 100).toFixed(1)}% of the fleet, lose {(flow.loss * 100).toFixed(1)}% to
-        space, and {(flow.drift * 100).toFixed(1)}% wander off to play.{" "}
+        Each second they copy {formatPercent(flow.grow)} of the fleet, lose {formatPercent(flow.loss)} to space, and{" "}
+        {formatPercent(flow.drift)} wander off to play.{" "}
         {Math.abs(net) < 0.0005
           ? "Net, the fleet is holding steady."
-          : `Net, the fleet ${net >= 0 ? "grows" : "shrinks"} ${(Math.abs(net) * 100).toFixed(1)}% a second.`}
+          : `Net, the fleet ${net >= 0 ? "grows" : "shrinks"} ${formatPercent(Math.abs(net))} a second.`}
       </p>
       {s.replication < 3 && (
         <p className="mt-2 text-xs leading-snug text-ink/60">
