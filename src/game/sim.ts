@@ -67,6 +67,10 @@ export interface GameData {
   clicks: number;
   clock: number;
   savedAt: number;
+  /** Fractional tee already cut, not yet on the counter. */
+  makeBuf: number;
+  /** Fractional golfer already waiting, not yet a sale. */
+  sellBuf: number;
 }
 
 export interface OfflineReport {
@@ -166,6 +170,8 @@ export function initialData(): GameData {
     clicks: 0,
     clock: 0,
     savedAt: Date.now(),
+    makeBuf: 0,
+    sellBuf: 0,
   };
 }
 
@@ -624,23 +630,35 @@ function addMade(s: GameData, want: number): GameData {
   if (want <= 0 || s.wood <= 0 || per <= 0) return s;
   const made = Math.min(want, s.wood / per);
   if (!(made > 0)) return s;
+  const buf = (s.makeBuf || 0) + made;
+  const whole = Math.floor(buf);
   return {
     ...s,
     wood: s.wood - made * per,
-    tees: s.tees + made,
-    unsold: s.unsold + made,
+    tees: s.tees + whole,
+    unsold: s.unsold + whole,
+    makeBuf: buf - whole,
   };
 }
 
 function sell(s: GameData, dt: number): GameData {
-  const n = Math.min(s.unsold, demandPerSec(s) * dt);
-  if (!(n > 0)) return s;
-  let cash = s.cash + n * teePrice(s);
+  const price = teePrice(s);
+  let buf = (s.sellBuf || 0) + demandPerSec(s) * dt;
+  const stock = Math.floor(s.unsold + 1e-6);
+  const sold = Math.min(stock, Math.floor(buf));
+  if (sold <= 0) {
+    if (stock < 1) buf = Math.min(buf, 0.999);
+    return { ...s, unsold: stock, sellBuf: buf };
+  }
+  buf -= sold;
+  const left = stock - sold;
+  if (left < 1) buf = Math.min(buf, 0.999);
+  let cash = s.cash + sold * price;
   if (owns(s, "trading")) {
     const swing = (Math.random() - 0.46) * 0.25;
-    cash += n * teePrice(s) * 0.12 * (1 + swing);
+    cash += sold * price * 0.12 * (1 + swing);
   }
-  return { ...s, unsold: s.unsold - n, cash };
+  return { ...s, unsold: left, sellBuf: buf, cash };
 }
 
 function think(s: GameData, dt: number): GameData {
@@ -953,10 +971,33 @@ function num(v: unknown, fb: number): number {
   return typeof v === "number" && Number.isFinite(v) ? v : fb;
 }
 
+function wholeTee(raw: number): { whole: number; part: number } {
+  const whole = Math.max(0, Math.round(raw));
+  const part = raw - Math.floor(raw);
+  if (whole > Math.floor(raw + 1e-9)) return { whole, part: 0 };
+  return { whole, part: part > 1e-4 ? part : 0 };
+}
+
 function scrub(s: GameData): GameData {
   const n = (v: number, fb = 0) => (Number.isFinite(v) ? v : fb);
   s.tees = Math.max(0, n(s.tees));
   s.unsold = Math.max(0, n(s.unsold));
+  s.makeBuf = clamp(n(s.makeBuf), 0, 0.999999);
+  s.sellBuf = Math.max(0, n(s.sellBuf));
+  if (s.phase === "workshop") {
+    const tee = wholeTee(s.tees);
+    const stock = wholeTee(s.unsold);
+    s.tees = tee.whole;
+    s.unsold = stock.whole;
+    const bank = Math.max(tee.part, stock.part);
+    if (bank > 0) {
+      const buf = s.makeBuf + bank;
+      const extra = Math.floor(buf);
+      s.makeBuf = buf - extra;
+      s.tees += extra;
+      s.unsold += extra;
+    }
+  }
   s.cash = n(s.cash);
   s.wood = Math.max(0, n(s.wood));
   s.woodQuote = clamp(n(s.woodQuote, 4), 0.5, 40);

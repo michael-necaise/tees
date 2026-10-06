@@ -139,7 +139,7 @@ function Shell({
         {s.offline && (
           <div className="mt-3 rounded-xl bg-ink/5 px-3 py-2 text-sm leading-snug">
             <p>
-              Away {formatDuration(s.offline.seconds)}. The shop made {formatTees(s.offline.tees)}
+              Away {formatDuration(s.offline.seconds)}. The shop made {formatTees(Math.round(s.offline.tees))}
               {Math.abs(s.offline.cash) >= 0.5 ? ` and the till moved ${formatMoney(s.offline.cash)}` : ""}.
             </p>
             <button
@@ -262,14 +262,14 @@ function Workshop() {
   return (
     <Shell stage="Stage 1 · The workshop" title="Make tees">
       {early ? <FirstSteps /> : <Move>{v.coach}</Move>}
-      <p className="mt-4 font-display text-6xl leading-none tabular-nums">{formatTees(s.tees)}</p>
+      <p className="mt-4 font-display text-6xl leading-none tabular-nums">{formatTees(Math.floor(s.tees))}</p>
       <p className="mt-1 text-sm text-ink/70">tees made, ever</p>
 
       <dl className="mt-4 grid grid-cols-2 gap-x-3 gap-y-3 border-t border-ink/10 pt-3">
         <Stat
           k="On the counter"
-          v={formatTees(s.unsold)}
-          hint={s.unsold > 0 ? "Golfers buy these." : "Empty until you make one."}
+          v={formatTees(Math.floor(s.unsold))}
+          hint={s.unsold >= 1 ? "Golfers buy these." : "Empty until you make one."}
         />
         <Stat k="Golfers want" v={`${formatCompact(v.demand)} a second`} hint={`At ${formatMoney(v.price)} a tee`} />
         <Stat
@@ -295,7 +295,7 @@ function Workshop() {
           <span className="text-xs font-medium opacity-80">
             {out
               ? "Buy a dowel below, or sweep the floor."
-              : `Puts ${formatTees(v.click)} on the counter. Golfers buy it for ${formatMoney(v.price)}.`}
+              : `Puts ${Math.max(1, Math.floor(v.click))} on the counter. Golfers buy ${Math.floor(v.click) > 1 ? "them" : "it"} for ${formatMoney(v.price)}.`}
           </span>
         </Btn>
         <div className="pointer-events-none absolute inset-x-0 -top-1 flex justify-center">
